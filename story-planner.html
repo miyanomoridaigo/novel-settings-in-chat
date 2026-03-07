@@ -80,6 +80,12 @@ body { font-family:'Segoe UI','Hiragino Sans',sans-serif; background:var(--bg); 
 .quick-replies { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .quick-reply { padding:8px 16px; border-radius:20px; border:1px solid var(--accent); background:transparent; color:var(--accent2); cursor:pointer; font-size:13px; transition:all .15s; }
 .quick-reply:hover { background:var(--accent-glow); transform:translateY(-1px); }
+.quick-reply.selected { background:var(--accent); color:#fff; border-color:var(--accent); }
+.quick-reply.selected:hover { background:#6a4ae0; }
+.btn-confirm-multi { display:inline-flex; align-items:center; gap:6px; padding:8px 20px; border-radius:20px; border:2px solid var(--success); background:rgba(52,211,153,0.1); color:var(--success); cursor:pointer; font-size:13px; font-weight:600; margin-top:8px; transition:all .15s; }
+.btn-confirm-multi:hover { background:var(--success); color:#fff; }
+.btn-confirm-multi:disabled { opacity:.4; cursor:not-allowed; }
+.multi-select-hint { font-size:11px; color:var(--text2); margin-top:6px; }
 
 /* Input Area */
 .input-area { padding:16px 20px; border-top:1px solid var(--border); background:var(--surface); }
@@ -412,8 +418,9 @@ function getQuestionFlow(structureType) {
     {
       phase:'concept', id:'genre',
       text:'まず、どんなジャンルの物語を考えていますか？',
-      hint:'複数選んでもOKです',
-      quickReplies:['ファンタジー','SF','ミステリー','恋愛','ホラー','歴史','青春','アクション','ヒューマンドラマ']
+      hint:'複数選んでもOKです。選んだら「決定」ボタンを押してください。',
+      quickReplies:['ファンタジー','SF','ミステリー','恋愛','ホラー','歴史','青春','アクション','ヒューマンドラマ'],
+      multiSelect:true
     },
     {
       phase:'concept', id:'target',
@@ -454,7 +461,8 @@ function getQuestionFlow(structureType) {
       phase:'character', id:'protag_flaw',
       text:'主人公の最大の<strong>欠点・弱さ（Flaw）</strong>は何ですか？\n\nこの欠点が物語を通じて変化していきます。',
       hint:'例：「他人を信用できない」「自己犠牲が過ぎる」「傲慢」',
-      quickReplies:['臆病','傲慢','自己犠牲的','嘘つき','孤独を好む','完璧主義','復讐心','無関心']
+      quickReplies:['臆病','傲慢','自己犠牲的','嘘つき','孤独を好む','完璧主義','復讐心','無関心'],
+      multiSelect:true
     },
     {
       phase:'character', id:'protag_ghost',
@@ -481,7 +489,8 @@ function getQuestionFlow(structureType) {
       phase:'theme', id:'theme_core',
       text:'物語の<strong>テーマ（メッセージ）</strong>は何ですか？\n\n「この物語は○○についての物語だ」と一言で言えるものです。',
       hint:'例：「贖罪」「成長」「愛の代償」「自由vs安全」',
-      quickReplies:['愛','友情','成長','贖罪','自由','正義','家族','アイデンティティ','犠牲','許し']
+      quickReplies:['愛','友情','成長','贖罪','自由','正義','家族','アイデンティティ','犠牲','許し'],
+      multiSelect:true
     },
     {
       phase:'theme', id:'theme_question',
@@ -597,7 +606,7 @@ function getCurrentPhase() {
   return questionQueue[currentQuestionIndex]?.phase || 'concept';
 }
 
-function addMessage(type, content, quickReplies, hint) {
+function addMessage(type, content, quickReplies, hint, multiSelect) {
   const container = document.getElementById('chatContainer');
   const msg = document.createElement('div');
   msg.className = `message ${type}`;
@@ -605,7 +614,12 @@ function addMessage(type, content, quickReplies, hint) {
   let html = `<div class="avatar">${avatar}</div><div class="bubble">${content.replace(/\n/g,'<br>')}`;
   if (hint) html += `<br><small style="color:var(--text2)">💡 ${hint}</small>`;
   if (quickReplies && quickReplies.length) {
-    html += `<div class="quick-replies">${quickReplies.map(r => `<button class="quick-reply" onclick="selectQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+    if (multiSelect) {
+      html += `<div class="quick-replies" data-multi="true">${quickReplies.map(r => `<button class="quick-reply" onclick="toggleQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+      html += `<button class="btn-confirm-multi" onclick="confirmMultiSelect(this)" disabled>✓ 決定</button>`;
+    } else {
+      html += `<div class="quick-replies">${quickReplies.map(r => `<button class="quick-reply" onclick="selectQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+    }
   }
   html += '</div>';
   msg.innerHTML = html;
@@ -630,9 +644,32 @@ function removeTypingIndicator() {
 
 function selectQuickReply(btn, value) {
   document.getElementById('userInput').value = value;
-  // Remove all quick reply buttons in the same group
   const parent = btn.closest('.quick-replies');
   if (parent) parent.querySelectorAll('.quick-reply').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+  sendMessage();
+}
+
+// Multi-select: toggle selection on/off
+function toggleQuickReply(btn, value) {
+  btn.classList.toggle('selected');
+  // Enable/disable confirm button based on selection count
+  const bubble = btn.closest('.bubble');
+  const confirmBtn = bubble.querySelector('.btn-confirm-multi');
+  const selected = bubble.querySelectorAll('.quick-reply.selected');
+  if (confirmBtn) confirmBtn.disabled = selected.length === 0;
+}
+
+function confirmMultiSelect(btn) {
+  const bubble = btn.closest('.bubble');
+  const selected = bubble.querySelectorAll('.quick-reply.selected');
+  if (selected.length === 0) return;
+  const values = Array.from(selected).map(b => b.textContent);
+  // Disable all buttons
+  bubble.querySelectorAll('.quick-reply').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+  bubble.querySelectorAll('.quick-reply.selected').forEach(b => { b.style.opacity = '1'; });
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  document.getElementById('userInput').value = values.join('、');
   sendMessage();
 }
 
@@ -730,7 +767,7 @@ function askNextQuestion() {
     return;
   }
   const q = questionQueue[currentQuestionIndex];
-  addMessage('bot', q.text, q.quickReplies, q.hint);
+  addMessage('bot', q.text, q.quickReplies, q.hint, q.multiSelect);
   renderPhaseTabs();
 }
 
