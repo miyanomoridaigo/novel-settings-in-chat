@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Story Architect - 物語企画チャット</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+:root {
+  --bg: #0f0f14;
+  --surface: #1a1a24;
+  --surface2: #232334;
+  --border: #2e2e44;
+  --accent: #7c5cfc;
+  --accent2: #a78bfa;
+  --accent-glow: rgba(124,92,252,0.15);
+  --text: #e8e6f0;
+  --text2: #9896a8;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --chat-bot: #1e1e30;
+  --chat-user: #2a2650;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI','Hiragino Sans',sans-serif; background:var(--bg); color:var(--text); height:100vh; overflow:hidden; }
+
+/* Layout */
+.app { display:flex; height:100vh; }
+.sidebar { width:280px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; transition:transform .3s; }
+.sidebar.hidden { transform:translateX(-280px); position:absolute; z-index:10; height:100%; }
+.main { flex:1; display:flex; flex-direction:column; min-width:0; }
+
+/* Sidebar */
+.sidebar-header { padding:20px; border-bottom:1px solid var(--border); }
+.sidebar-header h1 { font-size:18px; color:var(--accent2); display:flex; align-items:center; gap:8px; }
+.sidebar-header h1 span { font-size:22px; }
+.btn-new { width:100%; margin-top:12px; padding:10px; background:var(--accent); color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; transition:all .2s; }
+.btn-new:hover { background:#6a4ae0; transform:translateY(-1px); }
+.project-list { flex:1; overflow-y:auto; padding:8px; }
+.project-item { padding:12px; border-radius:8px; cursor:pointer; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; transition:all .15s; }
+.project-item:hover { background:var(--surface2); }
+.project-item.active { background:var(--accent-glow); border:1px solid var(--accent); }
+.project-item .title { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+.project-item .meta { font-size:11px; color:var(--text2); }
+.project-item .delete-btn { opacity:0; background:none; border:none; color:var(--danger); cursor:pointer; font-size:16px; padding:4px; transition:opacity .15s; }
+.project-item:hover .delete-btn { opacity:1; }
+.sidebar-footer { padding:12px; border-top:1px solid var(--border); }
+.btn-settings { width:100%; padding:8px; background:var(--surface2); color:var(--text2); border:1px solid var(--border); border-radius:8px; cursor:pointer; font-size:12px; }
+.btn-settings:hover { border-color:var(--accent); color:var(--text); }
+
+/* Main Header */
+.main-header { padding:12px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+.btn-menu { background:none; border:none; color:var(--text2); font-size:20px; cursor:pointer; display:none; }
+.phase-tabs { display:flex; gap:4px; flex:1; overflow-x:auto; }
+.phase-tab { padding:6px 14px; border-radius:20px; font-size:12px; border:1px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; white-space:nowrap; transition:all .15s; }
+.phase-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.phase-tab.completed { border-color:var(--success); color:var(--success); }
+.phase-tab:hover:not(.active) { border-color:var(--accent2); color:var(--accent2); }
+.btn-summary { padding:6px 14px; border-radius:20px; font-size:12px; border:1px solid var(--warning); background:transparent; color:var(--warning); cursor:pointer; white-space:nowrap; }
+.btn-summary:hover { background:rgba(251,191,36,0.1); }
+
+/* Chat Area */
+.chat-container { flex:1; overflow-y:auto; padding:20px; scroll-behavior:smooth; }
+.message { display:flex; gap:10px; margin-bottom:16px; max-width:800px; animation:fadeIn .3s; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+.message.bot { margin-right:auto; }
+.message.user { margin-left:auto; flex-direction:row-reverse; }
+.avatar { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+.bot .avatar { background:var(--accent-glow); border:1px solid var(--accent); }
+.user .avatar { background:var(--chat-user); border:1px solid var(--border); }
+.bubble { padding:12px 16px; border-radius:16px; font-size:14px; line-height:1.7; max-width:600px; }
+.bot .bubble { background:var(--chat-bot); border:1px solid var(--border); border-bottom-left-radius:4px; }
+.user .bubble { background:var(--chat-user); border:1px solid var(--border); border-bottom-right-radius:4px; }
+.bubble strong { color:var(--accent2); }
+.bubble em { color:var(--warning); font-style:normal; }
+
+/* Quick Replies */
+.quick-replies { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.quick-reply { padding:8px 16px; border-radius:20px; border:1px solid var(--accent); background:transparent; color:var(--accent2); cursor:pointer; font-size:13px; transition:all .15s; }
+.quick-reply:hover { background:var(--accent-glow); transform:translateY(-1px); }
+
+/* Input Area */
+.input-area { padding:16px 20px; border-top:1px solid var(--border); background:var(--surface); }
+.input-wrap { display:flex; gap:10px; max-width:800px; margin:0 auto; }
+.input-wrap textarea { flex:1; padding:12px 16px; background:var(--surface2); border:1px solid var(--border); border-radius:12px; color:var(--text); font-size:14px; font-family:inherit; resize:none; outline:none; min-height:44px; max-height:120px; }
+.input-wrap textarea:focus { border-color:var(--accent); }
+.input-wrap textarea::placeholder { color:var(--text2); }
+.btn-send { width:44px; height:44px; border-radius:50%; background:var(--accent); border:none; color:#fff; font-size:18px; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.btn-send:hover { background:#6a4ae0; transform:scale(1.05); }
+.btn-send:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+
+/* Summary Panel */
+.summary-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100; display:none; align-items:center; justify-content:center; }
+.summary-overlay.show { display:flex; }
+.summary-panel { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:90%; max-width:900px; max-height:85vh; overflow-y:auto; padding:32px; }
+.summary-panel h2 { color:var(--accent2); margin-bottom:20px; font-size:22px; }
+.summary-section { margin-bottom:24px; padding:16px; background:var(--surface2); border-radius:12px; border:1px solid var(--border); }
+.summary-section h3 { color:var(--accent2); font-size:15px; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.summary-section p, .summary-section li { font-size:14px; line-height:1.8; color:var(--text); }
+.summary-section ul { padding-left:20px; }
+.summary-close { position:sticky; top:0; float:right; background:var(--surface2); border:1px solid var(--border); color:var(--text); width:32px; height:32px; border-radius:50%; cursor:pointer; font-size:16px; }
+
+/* Settings Modal */
+.settings-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100; display:none; align-items:center; justify-content:center; }
+.settings-overlay.show { display:flex; }
+.settings-panel { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:90%; max-width:500px; padding:32px; }
+.settings-panel h2 { color:var(--accent2); margin-bottom:20px; }
+.settings-panel label { display:block; font-size:13px; color:var(--text2); margin:12px 0 4px; }
+.settings-panel input { width:100%; padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; font-family:monospace; }
+.settings-panel input:focus { outline:none; border-color:var(--accent); }
+.settings-btns { display:flex; gap:10px; margin-top:20px; }
+.settings-btns button { flex:1; padding:10px; border-radius:8px; border:none; cursor:pointer; font-weight:600; }
+.btn-save-settings { background:var(--accent); color:#fff; }
+.btn-cancel-settings { background:var(--surface2); color:var(--text); border:1px solid var(--border) !important; }
+.firebase-status { margin-top:12px; padding:8px 12px; border-radius:8px; font-size:12px; }
+.firebase-status.connected { background:rgba(52,211,153,.1); color:var(--success); border:1px solid rgba(52,211,153,.3); }
+.firebase-status.disconnected { background:rgba(248,113,113,.1); color:var(--danger); border:1px solid rgba(248,113,113,.3); }
+.firebase-status.local { background:rgba(251,191,36,.1); color:var(--warning); border:1px solid rgba(251,191,36,.3); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+/* Responsive */
+@media(max-width:768px) {
+  .sidebar { position:absolute; z-index:10; height:100%; transform:translateX(-280px); }
+  .sidebar.show { transform:translateX(0); }
+  .btn-menu { display:block; }
+}
+
+/* Typing indicator */
+.typing { display:flex; gap:4px; padding:8px 0; }
+.typing span { width:8px; height:8px; border-radius:50%; background:var(--text2); animation:bounce .6s infinite alternate; }
+.typing span:nth-child(2) { animation-delay:.2s; }
+.typing span:nth-child(3) { animation-delay:.4s; }
+@keyframes bounce { to{opacity:.3;transform:translateY(-4px)} }
+
+.progress-bar { display:flex; gap:3px; margin:8px 0; }
+.progress-dot { width:8px; height:8px; border-radius:50%; background:var(--border); }
+.progress-dot.done { background:var(--success); }
+.progress-dot.current { background:var(--accent); box-shadow:0 0 6px var(--accent); }
+
+/* Export buttons */
+.export-btns { display:flex; gap:8px; margin-top:16px; }
+.export-btns button { padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:13px; }
+.export-btns button:hover { border-color:var(--accent); color:var(--accent2); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1><span>📖</span> Story Architect</h1>
+      <button class="btn-new" onclick="createNewProject()">＋ 新しいプロジェクト</button>
+    </div>
+    <div class="project-list" id="projectList"></div>
+    <div class="sidebar-footer">
+      <div id="storageStatus" class="firebase-status local">💾 ローカル保存モード</div>
+      <button class="btn-settings" onclick="toggleSettings(true)" style="margin-top:8px">⚙ Firebase設定</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="main-header">
+      <button class="btn-menu" onclick="toggleSidebar()">☰</button>
+      <div class="phase-tabs" id="phaseTabs"></div>
+      <button class="btn-summary" onclick="showSummary()">📋 企画書</button>
+    </header>
+    <div class="chat-container" id="chatContainer">
+      <div class="message bot">
+        <div class="avatar">📖</div>
+        <div class="bubble">
+          ようこそ <strong>Story Architect</strong> へ！<br><br>
+          私はあなたの物語作りをお手伝いする対話型プランナーです。<br>
+          左のサイドバーから<em>「新しいプロジェクト」</em>を作成して、一緒に素晴らしい物語を企画しましょう！
+        </div>
+      </div>
+    </div>
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="userInput" placeholder="ここに回答を入力..." rows="1" onkeydown="handleKey(event)" disabled></textarea>
+        <button class="btn-send" id="sendBtn" onclick="sendMessage()" disabled>➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Summary Overlay -->
+<div class="summary-overlay" id="summaryOverlay" onclick="if(event.target===this)closeSummary()">
+  <div class="summary-panel" id="summaryContent"></div>
+</div>
+
+<!-- Settings Overlay -->
+<div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)toggleSettings(false)">
+  <div class="settings-panel">
+    <h2>⚙ Firebase設定</h2>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">Firebaseを接続すると、クラウドにデータが保存されます。<br>空欄のままだとローカル保存で動作します。</p>
+    <label>API Key</label><input id="fbApiKey" placeholder="AIzaSy...">
+    <label>Auth Domain</label><input id="fbAuthDomain" placeholder="your-project.firebaseapp.com">
+    <label>Project ID</label><input id="fbProjectId" placeholder="your-project-id">
+    <label>Storage Bucket</label><input id="fbStorageBucket" placeholder="your-project.appspot.com">
+    <label>Messaging Sender ID</label><input id="fbMessagingSenderId" placeholder="123456789">
+    <label>App ID</label><input id="fbAppId" placeholder="1:123456789:web:abc123">
+    <div class="settings-btns">
+      <button class="btn-cancel-settings" onclick="toggleSettings(false)">キャンセル</button>
+      <button class="btn-save-settings" onclick="saveFirebaseConfig()">保存して接続</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA LAYER - Firebase / localStorage abstraction
+// ============================================================
+let db = null;
+let useFirebase = false;
+const STORAGE_KEY = 'story_architect_projects';
+const FB_CONFIG_KEY = 'story_architect_firebase_config';
+
+function initFirebase() {
+  const saved = localStorage.getItem(FB_CONFIG_KEY);
+  if (!saved) return false;
+  try {
+    const config = JSON.parse(saved);
+    if (!config.apiKey) return false;
+    if (!firebase.apps.length) firebase.initializeApp(config);
+    db = firebase.firestore();
+    useFirebase = true;
+    updateStorageStatus(true);
+    return true;
+  } catch(e) {
+    console.warn('Firebase init failed:', e);
+    return false;
+  }
+}
+
+function updateStorageStatus(connected) {
+  const el = document.getElementById('storageStatus');
+  if (connected) {
+    el.className = 'firebase-status connected';
+    el.textContent = '🔥 Firebase接続中';
+  } else {
+    el.className = 'firebase-status local';
+    el.textContent = '💾 ローカル保存モード';
+  }
+}
+
+function saveFirebaseConfig() {
+  const config = {
+    apiKey: document.getElementById('fbApiKey').value.trim(),
+    authDomain: document.getElementById('fbAuthDomain').value.trim(),
+    projectId: document.getElementById('fbProjectId').value.trim(),
+    storageBucket: document.getElementById('fbStorageBucket').value.trim(),
+    messagingSenderId: document.getElementById('fbMessagingSenderId').value.trim(),
+    appId: document.getElementById('fbAppId').value.trim()
+  };
+  if (!config.apiKey || !config.projectId) {
+    alert('API KeyとProject IDは必須です。\n空にするとローカルモードに戻ります。');
+    localStorage.removeItem(FB_CONFIG_KEY);
+    useFirebase = false;
+    updateStorageStatus(false);
+    toggleSettings(false);
+    return;
+  }
+  localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(config));
+  if (initFirebase()) {
+    // Migrate local data to Firebase
+    migrateToFirebase();
+    toggleSettings(false);
+    alert('Firebase接続に成功しました！');
+  } else {
+    alert('Firebase接続に失敗しました。設定を確認してください。');
+  }
+}
+
+async function migrateToFirebase() {
+  if (!useFirebase) return;
+  const local = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  for (const [id, proj] of Object.entries(local)) {
+    await db.collection('projects').doc(id).set(proj, {merge:true});
+  }
+}
+
+async function saveProject(project) {
+  if (useFirebase && db) {
+    try {
+      await db.collection('projects').doc(project.id).set(project);
+    } catch(e) { console.warn('Firebase save failed, using local:', e); }
+  }
+  const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  all[project.id] = project;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+}
+
+async function loadProjects() {
+  if (useFirebase && db) {
+    try {
+      const snap = await db.collection('projects').orderBy('updatedAt','desc').get();
+      const projects = {};
+      snap.forEach(doc => projects[doc.id] = doc.data());
+      // Also update local cache
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+      return projects;
+    } catch(e) { console.warn('Firebase load failed:', e); }
+  }
+  return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+}
+
+async function deleteProject(id) {
+  if (useFirebase && db) {
+    try { await db.collection('projects').doc(id).delete(); } catch(e) {}
+  }
+  const all = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  delete all[id];
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+}
+
+// ============================================================
+// STORY FRAMEWORK DEFINITIONS
+// ============================================================
+const PHASES = [
+  { id:'concept', label:'コンセプト', icon:'💡' },
+  { id:'character', label:'キャラクター', icon:'👤' },
+  { id:'theme', label:'テーマ', icon:'🎭' },
+  { id:'structure', label:'構成', icon:'🏗' },
+  { id:'plot', label:'プロット', icon:'📝' },
+  { id:'refine', label:'仕上げ', icon:'✨' }
+];
+
+const STRUCTURES = {
+  three_act: {
+    name: '三幕構成',
+    desc: 'ハリウッド映画の王道。設定→対立→解決の3パート。',
+    beats: [
+      {key:'act1_opening', label:'第一幕：オープニング', hint:'主人公の日常を描写'},
+      {key:'act1_inciting', label:'第一幕：事件の発端', hint:'物語を動かす出来事'},
+      {key:'act1_turn', label:'第一幕ターニングポイント', hint:'主人公が行動を決意する'},
+      {key:'act2_rising', label:'第二幕前半：試練', hint:'障害と成長'},
+      {key:'act2_midpoint', label:'ミッドポイント', hint:'物語の転換点、偽りの勝利or敗北'},
+      {key:'act2_crisis', label:'第二幕後半：危機', hint:'最大の困難に直面'},
+      {key:'act2_turn', label:'第二幕ターニングポイント', hint:'解決への糸口'},
+      {key:'act3_climax', label:'第三幕：クライマックス', hint:'最終対決'},
+      {key:'act3_resolution', label:'第三幕：結末', hint:'新しい日常'}
+    ]
+  },
+  kishotenketsu: {
+    name: '起承転結',
+    desc: '東アジア伝統の四段構成。「転」の意外性が鍵。',
+    beats: [
+      {key:'ki', label:'起（導入）', hint:'物語の世界と主人公を提示'},
+      {key:'sho', label:'承（展開）', hint:'物語を深め、発展させる'},
+      {key:'ten', label:'転（転換）', hint:'予想外の展開、視点の転換'},
+      {key:'ketsu', label:'結（結末）', hint:'すべてを収束させる'}
+    ]
+  },
+  johakyu: {
+    name: '序破急',
+    desc: '日本の伝統芸能由来。テンポの加速が魅力。',
+    beats: [
+      {key:'jo', label:'序（ゆっくりした導入）', hint:'世界観と人物をじっくり描く'},
+      {key:'ha', label:'破（展開と破壊）', hint:'テンポが上がり、対立が激化'},
+      {key:'kyu', label:'急（急速な収束）', hint:'一気に畳みかけ、余韻を残す'}
+    ]
+  },
+  save_the_cat: {
+    name: 'Save the Cat!',
+    desc: 'ブレイク・スナイダー式15ビートシート。',
+    beats: [
+      {key:'opening_image', label:'①オープニング・イメージ', hint:'物語のトーンを伝える最初の場面'},
+      {key:'setup', label:'②セットアップ', hint:'主人公の日常、欠陥、願望を描く'},
+      {key:'theme_stated', label:'③テーマの提示', hint:'誰かが物語のテーマを口にする'},
+      {key:'catalyst', label:'④きっかけ', hint:'日常を破壊する出来事'},
+      {key:'debate', label:'⑤悩みのとき', hint:'主人公が行動を躊躇する'},
+      {key:'break_into_two', label:'⑥第二幕へ', hint:'新しい世界への突入'},
+      {key:'b_story', label:'⑦Bストーリー', hint:'恋愛や友情のサブプロット'},
+      {key:'fun_and_games', label:'⑧お楽しみ', hint:'前提の約束を果たすシーン群'},
+      {key:'midpoint', label:'⑨ミッドポイント', hint:'偽りの勝利または偽りの敗北'},
+      {key:'bad_guys_close_in', label:'⑩迫りくる悪', hint:'外的・内的プレッシャーの増大'},
+      {key:'all_is_lost', label:'⑪すべてを失う', hint:'最悪の瞬間、死の匂い'},
+      {key:'dark_night', label:'⑫暗闇の魂', hint:'主人公が最も深い絶望に沈む'},
+      {key:'break_into_three', label:'⑬第三幕へ', hint:'AストーリーとBストーリーの融合から解決策を得る'},
+      {key:'finale', label:'⑭フィナーレ', hint:'新しい自分で問題を解決する'},
+      {key:'final_image', label:'⑮ファイナル・イメージ', hint:'オープニングと対比する最後の場面'}
+    ]
+  },
+  story_anatomy: {
+    name: 'ストーリーの解剖学',
+    desc: 'ジョン・トゥルービー式22ステップに基づく構成。',
+    beats: [
+      {key:'weakness_need', label:'①弱点と欲求', hint:'主人公の心理的・道徳的弱点'},
+      {key:'desire', label:'②欲望', hint:'主人公が手に入れたい具体的な目標'},
+      {key:'opponent', label:'③対立者', hint:'主人公の欲望を阻む存在'},
+      {key:'plan', label:'④計画', hint:'目標達成のための戦略'},
+      {key:'battle', label:'⑤対決', hint:'対立者との直接的な衝突'},
+      {key:'self_revelation', label:'⑥自己発見', hint:'主人公が自分の本当の弱点を知る'},
+      {key:'new_equilibrium', label:'⑦新たな均衡', hint:'変化した主人公の新しい日常'}
+    ]
+  }
+};
+
+// ============================================================
+// QUESTION FLOW ENGINE
+// ============================================================
+function getQuestionFlow(structureType) {
+  const flow = [
+    // Phase: concept
+    {
+      phase:'concept', id:'genre',
+      text:'まず、どんなジャンルの物語を考えていますか？',
+      hint:'複数選んでもOKです',
+      quickReplies:['ファンタジー','SF','ミステリー','恋愛','ホラー','歴史','青春','アクション','ヒューマンドラマ']
+    },
+    {
+      phase:'concept', id:'target',
+      text:'この物語のターゲット読者・視聴者は？',
+      quickReplies:['子ども（〜12歳）','ティーン（13〜18歳）','ヤングアダルト','大人向け','全年齢']
+    },
+    {
+      phase:'concept', id:'high_concept',
+      text:'<strong>ハイコンセプト</strong>を考えましょう！\n\n「もしも〜だったら？（What if...?）」の形で、あなたの物語のアイデアを一文で表現してみてください。\n\nまだ固まっていなければ、思いつく限りのキーワードでも大丈夫です。',
+      hint:'例：「もしも死者と話せる少年が、自分の死を予言されたら？」'
+    },
+    {
+      phase:'concept', id:'logline',
+      text:'今の「What if」をもう少し具体的に。<strong>ログライン</strong>（物語の要約を1〜2文で）書いてみましょう。\n\n完璧でなくて大丈夫、後で修正できます！',
+      hint:'例：「死者と対話できる少年が、自身の死の予言を覆すため、過去の幽霊たちと協力して運命に立ち向かう」'
+    },
+
+    // Phase: character
+    {
+      phase:'character', id:'protag_name',
+      text:'さて、ここからが本番です！<strong>主人公</strong>を作り込みましょう。\n\nまず、主人公の名前と基本情報（年齢、職業、見た目など）を教えてください。',
+    },
+    {
+      phase:'character', id:'protag_ordinary',
+      text:'主人公の<strong>日常</strong>はどんなものですか？\n\n物語が始まる前、主人公はどのような生活を送っていますか？',
+    },
+    {
+      phase:'character', id:'protag_want',
+      text:'主人公が<strong>意識的に求めているもの（Want）</strong>は何ですか？\n\n物語の表面上の目標です。',
+      hint:'例：「名門大学に合格する」「犯人を捕まえる」「王国を救う」'
+    },
+    {
+      phase:'character', id:'protag_need',
+      text:'主人公が<strong>本当に必要としているもの（Need）</strong>は何ですか？\n\nこれは主人公自身も気づいていない、内面的な成長です。',
+      hint:'例：「他者を信頼すること」「自分の弱さを受け入れること」「愛されるに値する人間だと信じること」'
+    },
+    {
+      phase:'character', id:'protag_flaw',
+      text:'主人公の最大の<strong>欠点・弱さ（Flaw）</strong>は何ですか？\n\nこの欠点が物語を通じて変化していきます。',
+      hint:'例：「他人を信用できない」「自己犠牲が過ぎる」「傲慢」',
+      quickReplies:['臆病','傲慢','自己犠牲的','嘘つき','孤独を好む','完璧主義','復讐心','無関心']
+    },
+    {
+      phase:'character', id:'protag_ghost',
+      text:'主人公の<strong>過去の傷・トラウマ（Ghost）</strong>は何ですか？\n\n欠点の原因となった過去の出来事です。',
+      hint:'例：「幼い頃に親友に裏切られた」「大切な人を守れなかった」'
+    },
+    {
+      phase:'character', id:'antagonist',
+      text:'次に<strong>アンタゴニスト（対立者）</strong>について教えてください。\n\n人物でも、組織でも、社会的な力でも、主人公の内面でも構いません。\n\nどんな存在で、なぜ主人公と対立しますか？',
+    },
+    {
+      phase:'character', id:'antag_motivation',
+      text:'アンタゴニストにも<strong>信念や動機</strong>がありますよね。\n\n彼/彼女/それが自分の行動を正当化する理由は何ですか？',
+      hint:'最高の悪役は「自分が正しい」と信じている'
+    },
+    {
+      phase:'character', id:'supporting',
+      text:'重要な<strong>サブキャラクター</strong>はいますか？\n\n仲間、メンター、恋人、ライバルなど。名前と役割を教えてください。\n\nまだ決まっていなければ「スキップ」と入力してください。',
+      quickReplies:['スキップ']
+    },
+
+    // Phase: theme
+    {
+      phase:'theme', id:'theme_core',
+      text:'物語の<strong>テーマ（メッセージ）</strong>は何ですか？\n\n「この物語は○○についての物語だ」と一言で言えるものです。',
+      hint:'例：「贖罪」「成長」「愛の代償」「自由vs安全」',
+      quickReplies:['愛','友情','成長','贖罪','自由','正義','家族','アイデンティティ','犠牲','許し']
+    },
+    {
+      phase:'theme', id:'theme_question',
+      text:'テーマを<strong>問いの形</strong>にしてみましょう。\n\nこの物語が読者に投げかける問いは何ですか？',
+      hint:'例：「真の強さとは何か？」「人は過去を乗り越えられるのか？」'
+    },
+    {
+      phase:'theme', id:'theme_answer',
+      text:'その問いに対する、この物語なりの<strong>答え</strong>は何ですか？\n\nこれが物語の結末を決定づけます。',
+    },
+
+    // Phase: structure
+    {
+      phase:'structure', id:'structure_choice',
+      text:'物語の<strong>構成フレームワーク</strong>を選びましょう！\n\nどの構成で物語を組み立てますか？',
+      quickReplies:['三幕構成','起承転結','序破急','Save the Cat!','ストーリーの解剖学']
+    }
+  ];
+
+  return flow;
+}
+
+function getStructureQuestions(structureKey) {
+  const st = STRUCTURES[structureKey];
+  if (!st) return [];
+  return st.beats.map((beat, i) => ({
+    phase:'plot', id:`beat_${beat.key}`,
+    text: `<strong>${beat.label}</strong>\n\nこのパートで何が起きますか？`,
+    hint: beat.hint
+  }));
+}
+
+const REFINE_QUESTIONS = [
+  {
+    phase:'refine', id:'title',
+    text:'物語の<strong>タイトル</strong>を考えましょう！\n\n仮タイトルでも構いません。',
+  },
+  {
+    phase:'refine', id:'tone',
+    text:'物語の<strong>トーン・雰囲気</strong>はどんな感じですか？',
+    quickReplies:['ダーク・シリアス','明るい・コメディ','叙情的','スリリング','ほのぼの','エピック','ノスタルジック']
+  },
+  {
+    phase:'refine', id:'unique',
+    text:'この物語が他の作品と違う<strong>ユニークポイント</strong>は何ですか？\n\n「ここが新しい！」というところを教えてください。',
+  },
+  {
+    phase:'refine', id:'additional',
+    text:'他に物語について追加したいこと、気になることはありますか？\n\nなければ「完了」と入力してください。',
+    quickReplies:['完了']
+  }
+];
+
+// ============================================================
+// APP STATE
+// ============================================================
+let currentProject = null;
+let allProjects = {};
+let questionQueue = [];
+let currentQuestionIndex = 0;
+let isProcessing = false;
+
+// ============================================================
+// UI FUNCTIONS
+// ============================================================
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('show');
+}
+
+function toggleSettings(show) {
+  const overlay = document.getElementById('settingsOverlay');
+  if (show) {
+    const saved = JSON.parse(localStorage.getItem(FB_CONFIG_KEY) || '{}');
+    document.getElementById('fbApiKey').value = saved.apiKey || '';
+    document.getElementById('fbAuthDomain').value = saved.authDomain || '';
+    document.getElementById('fbProjectId').value = saved.projectId || '';
+    document.getElementById('fbStorageBucket').value = saved.storageBucket || '';
+    document.getElementById('fbMessagingSenderId').value = saved.messagingSenderId || '';
+    document.getElementById('fbAppId').value = saved.appId || '';
+  }
+  overlay.classList.toggle('show', show);
+}
+
+function renderProjectList() {
+  const list = document.getElementById('projectList');
+  const sorted = Object.values(allProjects).sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0));
+  list.innerHTML = sorted.map(p => `
+    <div class="project-item ${currentProject && currentProject.id === p.id ? 'active' : ''}" onclick="switchProject('${p.id}')">
+      <div>
+        <div class="title">${p.data?.title || p.data?.high_concept?.substring(0,25) || '無題のプロジェクト'}</div>
+        <div class="meta">${p.data?.genre || ''} · ${new Date(p.updatedAt).toLocaleDateString('ja-JP')}</div>
+      </div>
+      <button class="delete-btn" onclick="event.stopPropagation();confirmDelete('${p.id}')" title="削除">✕</button>
+    </div>
+  `).join('');
+}
+
+function renderPhaseTabs() {
+  const tabs = document.getElementById('phaseTabs');
+  if (!currentProject) { tabs.innerHTML=''; return; }
+  const completedPhases = currentProject.completedPhases || [];
+  const currentPhase = getCurrentPhase();
+  tabs.innerHTML = PHASES.map(p => {
+    let cls = 'phase-tab';
+    if (completedPhases.includes(p.id)) cls += ' completed';
+    if (p.id === currentPhase) cls += ' active';
+    return `<div class="${cls}" onclick="jumpToPhase('${p.id}')">${p.icon} ${p.label}</div>`;
+  }).join('');
+}
+
+function getCurrentPhase() {
+  if (!questionQueue.length || currentQuestionIndex >= questionQueue.length) return 'refine';
+  return questionQueue[currentQuestionIndex]?.phase || 'concept';
+}
+
+function addMessage(type, content, quickReplies, hint) {
+  const container = document.getElementById('chatContainer');
+  const msg = document.createElement('div');
+  msg.className = `message ${type}`;
+  const avatar = type === 'bot' ? '📖' : '✍️';
+  let html = `<div class="avatar">${avatar}</div><div class="bubble">${content.replace(/\n/g,'<br>')}`;
+  if (hint) html += `<br><small style="color:var(--text2)">💡 ${hint}</small>`;
+  if (quickReplies && quickReplies.length) {
+    html += `<div class="quick-replies">${quickReplies.map(r => `<button class="quick-reply" onclick="selectQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+  }
+  html += '</div>';
+  msg.innerHTML = html;
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addTypingIndicator() {
+  const container = document.getElementById('chatContainer');
+  const msg = document.createElement('div');
+  msg.className = 'message bot';
+  msg.id = 'typingIndicator';
+  msg.innerHTML = `<div class="avatar">📖</div><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTypingIndicator() {
+  const el = document.getElementById('typingIndicator');
+  if (el) el.remove();
+}
+
+function selectQuickReply(btn, value) {
+  document.getElementById('userInput').value = value;
+  // Remove all quick reply buttons in the same group
+  const parent = btn.closest('.quick-replies');
+  if (parent) parent.querySelectorAll('.quick-reply').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+  sendMessage();
+}
+
+// ============================================================
+// PROJECT MANAGEMENT
+// ============================================================
+async function createNewProject() {
+  const id = 'proj_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
+  const project = {
+    id,
+    data: {},
+    messages: [],
+    completedPhases: [],
+    currentQuestionIndex: 0,
+    structureType: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  allProjects[id] = project;
+  await saveProject(project);
+  switchProject(id);
+}
+
+async function switchProject(id) {
+  currentProject = allProjects[id];
+  if (!currentProject) return;
+  currentQuestionIndex = currentProject.currentQuestionIndex || 0;
+
+  // Rebuild question queue
+  questionQueue = getQuestionFlow();
+  if (currentProject.structureType) {
+    const structQ = getStructureQuestions(currentProject.structureType);
+    const refineQ = REFINE_QUESTIONS;
+    // Insert structure questions after 'structure_choice'
+    const idx = questionQueue.findIndex(q => q.id === 'structure_choice');
+    questionQueue = [...questionQueue.slice(0, idx+1), ...structQ, ...refineQ];
+  }
+
+  renderProjectList();
+  renderPhaseTabs();
+
+  // Rebuild chat
+  const container = document.getElementById('chatContainer');
+  container.innerHTML = '';
+
+  // Replay messages
+  if (currentProject.messages.length) {
+    currentProject.messages.forEach(m => {
+      addMessage(m.type, m.content, null, null);
+    });
+    // Show next question if not finished
+    if (currentQuestionIndex < questionQueue.length) {
+      askNextQuestion();
+    } else {
+      addMessage('bot', '🎉 <strong>企画書が完成しました！</strong>\n\n右上の「📋 企画書」ボタンで全体を確認できます。\n内容を修正したい場合は、いつでも該当フェーズのタブをクリックしてください。');
+    }
+  } else {
+    // Start fresh
+    addMessage('bot', `プロジェクトを作成しました！ それでは、物語づくりを始めましょう。\n\nまずは<strong>コンセプト</strong>から。一歩ずつ進めていきますので、気軽に答えてくださいね。`);
+    setTimeout(() => askNextQuestion(), 800);
+  }
+
+  enableInput(true);
+}
+
+function confirmDelete(id) {
+  if (confirm('このプロジェクトを削除しますか？')) {
+    deleteProject(id);
+    delete allProjects[id];
+    if (currentProject && currentProject.id === id) {
+      currentProject = null;
+      document.getElementById('chatContainer').innerHTML = '';
+      enableInput(false);
+    }
+    renderProjectList();
+  }
+}
+
+function enableInput(enabled) {
+  document.getElementById('userInput').disabled = !enabled;
+  document.getElementById('sendBtn').disabled = !enabled;
+}
+
+// ============================================================
+// CHAT ENGINE
+// ============================================================
+function askNextQuestion() {
+  if (currentQuestionIndex >= questionQueue.length) {
+    addMessage('bot', '🎉 <strong>すべての質問に答え終わりました！</strong>\n\n素晴らしい物語の企画書が出来上がりました。右上の「📋 企画書」ボタンで確認してください。\n\n修正したい箇所があれば、フェーズタブをクリックして遡ることもできます。');
+    if (currentProject) {
+      currentProject.completedPhases = PHASES.map(p=>p.id);
+      saveProject(currentProject);
+      renderPhaseTabs();
+    }
+    return;
+  }
+  const q = questionQueue[currentQuestionIndex];
+  addMessage('bot', q.text, q.quickReplies, q.hint);
+  renderPhaseTabs();
+}
+
+const STRUCTURE_MAP = {
+  '三幕構成': 'three_act',
+  '起承転結': 'kishotenketsu',
+  '序破急': 'johakyu',
+  'Save the Cat!': 'save_the_cat',
+  'save the cat': 'save_the_cat',
+  'ストーリーの解剖学': 'story_anatomy'
+};
+
+async function processAnswer(answer) {
+  if (!currentProject || currentQuestionIndex >= questionQueue.length) return;
+
+  const q = questionQueue[currentQuestionIndex];
+
+  // Store answer
+  currentProject.data[q.id] = answer;
+  currentProject.messages.push({type:'bot', content:q.text});
+  currentProject.messages.push({type:'user', content:answer});
+
+  // Handle structure choice
+  if (q.id === 'structure_choice') {
+    const key = STRUCTURE_MAP[answer] || STRUCTURE_MAP[answer.trim()] || 'three_act';
+    currentProject.structureType = key;
+
+    const structQ = getStructureQuestions(key);
+    const refineQ = REFINE_QUESTIONS;
+    const idx = questionQueue.findIndex(qq => qq.id === 'structure_choice');
+    questionQueue = [...questionQueue.slice(0, idx+1), ...structQ, ...refineQ];
+
+    // Add transition message
+    const stName = STRUCTURES[key].name;
+    addTypingIndicator();
+    await delay(500);
+    removeTypingIndicator();
+    addMessage('bot', `<strong>${stName}</strong>を選択しました！\n\n${STRUCTURES[key].desc}\n\nそれでは、各パートの内容を決めていきましょう。`);
+    await delay(600);
+  }
+
+  // Update phase completion
+  const completedPhase = q.phase;
+  const nextIndex = currentQuestionIndex + 1;
+  if (nextIndex < questionQueue.length && questionQueue[nextIndex].phase !== completedPhase) {
+    if (!currentProject.completedPhases.includes(completedPhase)) {
+      currentProject.completedPhases.push(completedPhase);
+    }
+    // Phase transition message
+    addTypingIndicator();
+    await delay(600);
+    removeTypingIndicator();
+    const nextPhase = PHASES.find(p => p.id === questionQueue[nextIndex].phase);
+    if (nextPhase) {
+      addMessage('bot', `${nextPhase.icon} <strong>${nextPhase.label}</strong>フェーズに進みます！`);
+      await delay(400);
+    }
+  }
+
+  currentQuestionIndex = nextIndex;
+  currentProject.currentQuestionIndex = currentQuestionIndex;
+  currentProject.updatedAt = Date.now();
+  await saveProject(currentProject);
+  renderProjectList();
+  renderPhaseTabs();
+
+  askNextQuestion();
+}
+
+async function sendMessage() {
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text || isProcessing) return;
+
+  isProcessing = true;
+  input.value = '';
+  input.style.height = 'auto';
+  addMessage('user', text);
+
+  addTypingIndicator();
+  await delay(400 + Math.random() * 400);
+  removeTypingIndicator();
+
+  await processAnswer(text);
+  isProcessing = false;
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+  // Auto-resize
+  setTimeout(() => {
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+  }, 0);
+}
+
+function jumpToPhase(phaseId) {
+  if (!currentProject) return;
+  const idx = questionQueue.findIndex(q => q.phase === phaseId);
+  if (idx >= 0 && idx < currentQuestionIndex) {
+    // Allow revisiting - just show in chat
+    const phaseQuestions = questionQueue.filter(q => q.phase === phaseId);
+    addMessage('bot', `📌 <strong>${PHASES.find(p=>p.id===phaseId)?.label}</strong>の回答を確認：`);
+    phaseQuestions.forEach(q => {
+      const answer = currentProject.data[q.id];
+      if (answer) {
+        addMessage('bot', `<strong>${q.text.replace(/<[^>]+>/g,'').substring(0,40)}...</strong>`);
+        addMessage('user', answer);
+      }
+    });
+    addMessage('bot', '修正したい場合は、チャットで「○○を修正：新しい内容」と入力してください。');
+  }
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// SUMMARY / EXPORT
+// ============================================================
+function showSummary() {
+  if (!currentProject || !currentProject.data) {
+    alert('まだプロジェクトデータがありません。');
+    return;
+  }
+  const d = currentProject.data;
+  const stKey = currentProject.structureType;
+  const st = stKey ? STRUCTURES[stKey] : null;
+
+  let html = `<button class="summary-close" onclick="closeSummary()">✕</button>`;
+  html += `<h2>📖 ${d.title || d.high_concept?.substring(0,30) || '物語企画書'}</h2>`;
+
+  // Concept
+  html += `<div class="summary-section"><h3>💡 コンセプト</h3>`;
+  if (d.genre) html += `<p><strong>ジャンル：</strong>${d.genre}</p>`;
+  if (d.target) html += `<p><strong>ターゲット：</strong>${d.target}</p>`;
+  if (d.high_concept) html += `<p><strong>ハイコンセプト：</strong>${d.high_concept}</p>`;
+  if (d.logline) html += `<p><strong>ログライン：</strong>${d.logline}</p>`;
+  html += `</div>`;
+
+  // Character
+  html += `<div class="summary-section"><h3>👤 キャラクター</h3>`;
+  html += `<p><strong>■ 主人公</strong></p>`;
+  if (d.protag_name) html += `<p><strong>名前/基本情報：</strong>${d.protag_name}</p>`;
+  if (d.protag_ordinary) html += `<p><strong>日常：</strong>${d.protag_ordinary}</p>`;
+  if (d.protag_want) html += `<p><strong>Want（表面的欲求）：</strong>${d.protag_want}</p>`;
+  if (d.protag_need) html += `<p><strong>Need（真の必要）：</strong>${d.protag_need}</p>`;
+  if (d.protag_flaw) html += `<p><strong>欠点・弱さ：</strong>${d.protag_flaw}</p>`;
+  if (d.protag_ghost) html += `<p><strong>過去の傷：</strong>${d.protag_ghost}</p>`;
+  if (d.antagonist) html += `<p style="margin-top:12px"><strong>■ 対立者：</strong>${d.antagonist}</p>`;
+  if (d.antag_motivation) html += `<p><strong>対立者の動機：</strong>${d.antag_motivation}</p>`;
+  if (d.supporting && d.supporting !== 'スキップ') html += `<p style="margin-top:12px"><strong>■ サブキャラクター：</strong>${d.supporting}</p>`;
+  html += `</div>`;
+
+  // Theme
+  html += `<div class="summary-section"><h3>🎭 テーマ</h3>`;
+  if (d.theme_core) html += `<p><strong>テーマ：</strong>${d.theme_core}</p>`;
+  if (d.theme_question) html += `<p><strong>問い：</strong>${d.theme_question}</p>`;
+  if (d.theme_answer) html += `<p><strong>答え：</strong>${d.theme_answer}</p>`;
+  html += `</div>`;
+
+  // Structure
+  if (st) {
+    html += `<div class="summary-section"><h3>🏗 構成 — ${st.name}</h3>`;
+    st.beats.forEach(beat => {
+      const val = d[`beat_${beat.key}`];
+      if (val) html += `<p><strong>${beat.label}：</strong>${val}</p>`;
+    });
+    html += `</div>`;
+  }
+
+  // Refine
+  if (d.tone || d.unique || d.additional) {
+    html += `<div class="summary-section"><h3>✨ 仕上げ</h3>`;
+    if (d.tone) html += `<p><strong>トーン：</strong>${d.tone}</p>`;
+    if (d.unique) html += `<p><strong>ユニークポイント：</strong>${d.unique}</p>`;
+    if (d.additional && d.additional !== '完了') html += `<p><strong>その他：</strong>${d.additional}</p>`;
+    html += `</div>`;
+  }
+
+  // Export buttons
+  html += `<div class="export-btns">
+    <button onclick="exportAsText()">📄 テキスト出力</button>
+    <button onclick="exportAsJSON()">💾 JSONエクスポート</button>
+  </div>`;
+
+  document.getElementById('summaryContent').innerHTML = html;
+  document.getElementById('summaryOverlay').classList.add('show');
+}
+
+function closeSummary() {
+  document.getElementById('summaryOverlay').classList.remove('show');
+}
+
+function exportAsText() {
+  if (!currentProject) return;
+  const d = currentProject.data;
+  const st = currentProject.structureType ? STRUCTURES[currentProject.structureType] : null;
+
+  let text = `========================================\n`;
+  text += `物語企画書: ${d.title || '無題'}\n`;
+  text += `========================================\n\n`;
+  text += `【コンセプト】\n`;
+  text += `ジャンル: ${d.genre || ''}\nターゲット: ${d.target || ''}\nハイコンセプト: ${d.high_concept || ''}\nログライン: ${d.logline || ''}\n\n`;
+  text += `【主人公】\n`;
+  text += `基本情報: ${d.protag_name || ''}\n日常: ${d.protag_ordinary || ''}\nWant: ${d.protag_want || ''}\nNeed: ${d.protag_need || ''}\n欠点: ${d.protag_flaw || ''}\n過去の傷: ${d.protag_ghost || ''}\n\n`;
+  text += `【対立者】\n${d.antagonist || ''}\n動機: ${d.antag_motivation || ''}\n\n`;
+  if (d.supporting && d.supporting !== 'スキップ') text += `【サブキャラクター】\n${d.supporting}\n\n`;
+  text += `【テーマ】\nテーマ: ${d.theme_core || ''}\n問い: ${d.theme_question || ''}\n答え: ${d.theme_answer || ''}\n\n`;
+  if (st) {
+    text += `【構成: ${st.name}】\n`;
+    st.beats.forEach(b => {
+      const val = d[`beat_${b.key}`];
+      if (val) text += `${b.label}: ${val}\n`;
+    });
+    text += '\n';
+  }
+  if (d.tone) text += `トーン: ${d.tone}\n`;
+  if (d.unique) text += `ユニークポイント: ${d.unique}\n`;
+
+  const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${d.title || 'story_plan'}.txt`;
+  a.click();
+}
+
+function exportAsJSON() {
+  if (!currentProject) return;
+  const blob = new Blob([JSON.stringify(currentProject, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentProject.data.title || 'story_plan'}.json`;
+  a.click();
+}
+
+// ============================================================
+// INIT
+// ============================================================
+async function init() {
+  initFirebase();
+  allProjects = await loadProjects();
+  renderProjectList();
+
+  // Load saved Firebase config into form
+  const saved = JSON.parse(localStorage.getItem(FB_CONFIG_KEY) || '{}');
+  if (saved.apiKey) {
+    document.getElementById('fbApiKey').value = saved.apiKey;
+    document.getElementById('fbAuthDomain').value = saved.authDomain || '';
+    document.getElementById('fbProjectId').value = saved.projectId || '';
+    document.getElementById('fbStorageBucket').value = saved.storageBucket || '';
+    document.getElementById('fbMessagingSenderId').value = saved.messagingSenderId || '';
+    document.getElementById('fbAppId').value = saved.appId || '';
+  }
+}
+
+init();
+</script>
+</body>
+</html>
