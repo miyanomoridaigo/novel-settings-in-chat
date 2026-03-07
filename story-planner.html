@@ -153,6 +153,20 @@ body { font-family:'Segoe UI','Hiragino Sans',sans-serif; background:var(--bg); 
 .export-btns { display:flex; gap:8px; margin-top:16px; }
 .export-btns button { padding:8px 16px; border-radius:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:13px; }
 .export-btns button:hover { border-color:var(--accent); color:var(--accent2); }
+
+/* Edit answer */
+.bubble-wrap { position:relative; }
+.btn-edit-answer { position:absolute; top:6px; right:8px; background:none; border:none; color:var(--text2); cursor:pointer; font-size:12px; opacity:0; transition:opacity .15s; padding:2px 6px; border-radius:4px; }
+.bubble-wrap:hover .btn-edit-answer { opacity:1; }
+.btn-edit-answer:hover { color:var(--accent2); background:var(--surface2); }
+.edit-area { margin-top:8px; }
+.edit-area textarea { width:100%; padding:8px 12px; background:var(--bg); border:1px solid var(--accent); border-radius:8px; color:var(--text); font-size:13px; font-family:inherit; resize:vertical; min-height:60px; outline:none; }
+.edit-btns { display:flex; gap:6px; margin-top:6px; justify-content:flex-end; }
+.edit-btns button { padding:5px 14px; border-radius:6px; border:none; cursor:pointer; font-size:12px; font-weight:600; }
+.btn-edit-save { background:var(--accent); color:#fff; }
+.btn-edit-save:hover { background:#6a4ae0; }
+.btn-edit-cancel { background:var(--surface2); color:var(--text2); border:1px solid var(--border) !important; }
+.btn-edit-cancel:hover { color:var(--text); }
 </style>
 </head>
 <body>
@@ -552,6 +566,7 @@ let allProjects = {};
 let questionQueue = [];
 let currentQuestionIndex = 0;
 let isProcessing = false;
+let isComposing = false; // IME変換中フラグ
 
 // ============================================================
 // UI FUNCTIONS
@@ -606,25 +621,93 @@ function getCurrentPhase() {
   return questionQueue[currentQuestionIndex]?.phase || 'concept';
 }
 
-function addMessage(type, content, quickReplies, hint, multiSelect) {
+function addMessage(type, content, quickReplies, hint, multiSelect, questionId) {
   const container = document.getElementById('chatContainer');
   const msg = document.createElement('div');
   msg.className = `message ${type}`;
   const avatar = type === 'bot' ? '📖' : '✍️';
-  let html = `<div class="avatar">${avatar}</div><div class="bubble">${content.replace(/\n/g,'<br>')}`;
-  if (hint) html += `<br><small style="color:var(--text2)">💡 ${hint}</small>`;
-  if (quickReplies && quickReplies.length) {
-    if (multiSelect) {
-      html += `<div class="quick-replies" data-multi="true">${quickReplies.map(r => `<button class="quick-reply" onclick="toggleQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
-      html += `<button class="btn-confirm-multi" onclick="confirmMultiSelect(this)" disabled>✓ 決定</button>`;
-    } else {
-      html += `<div class="quick-replies">${quickReplies.map(r => `<button class="quick-reply" onclick="selectQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+
+  // User answers get an editable wrapper with edit button
+  if (type === 'user' && questionId) {
+    const escaped = content.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    let html = `<div class="avatar">${avatar}</div><div class="bubble-wrap"><div class="bubble" data-qid="${questionId}">${content.replace(/\n/g,'<br>')}</div>`;
+    html += `<button class="btn-edit-answer" onclick="startEditAnswer(this, '${questionId}')" title="編集">✏️ 編集</button></div>`;
+    msg.innerHTML = html;
+  } else {
+    let html = `<div class="avatar">${avatar}</div><div class="bubble">${content.replace(/\n/g,'<br>')}`;
+    if (hint) html += `<br><small style="color:var(--text2)">💡 ${hint}</small>`;
+    if (quickReplies && quickReplies.length) {
+      if (multiSelect) {
+        html += `<div class="quick-replies" data-multi="true">${quickReplies.map(r => `<button class="quick-reply" onclick="toggleQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+        html += `<button class="btn-confirm-multi" onclick="confirmMultiSelect(this)" disabled>✓ 決定</button>`;
+      } else {
+        html += `<div class="quick-replies">${quickReplies.map(r => `<button class="quick-reply" onclick="selectQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
+      }
     }
+    html += '</div>';
+    msg.innerHTML = html;
   }
-  html += '</div>';
-  msg.innerHTML = html;
+
   container.appendChild(msg);
   container.scrollTop = container.scrollHeight;
+}
+
+// ---- Answer Editing ----
+function startEditAnswer(btn, questionId) {
+  const wrap = btn.closest('.bubble-wrap');
+  const bubble = wrap.querySelector('.bubble');
+  const currentText = currentProject.data[questionId] || bubble.textContent;
+  btn.style.display = 'none';
+
+  const editDiv = document.createElement('div');
+  editDiv.className = 'edit-area';
+  editDiv.innerHTML = `
+    <textarea id="editTextarea_${questionId}">${currentText}</textarea>
+    <div class="edit-btns">
+      <button class="btn-edit-cancel" onclick="cancelEditAnswer(this, '${questionId}')">キャンセル</button>
+      <button class="btn-edit-save" onclick="saveEditAnswer(this, '${questionId}')">保存</button>
+    </div>
+  `;
+  wrap.appendChild(editDiv);
+
+  // IME support for edit textarea too
+  const ta = editDiv.querySelector('textarea');
+  ta.addEventListener('compositionstart', () => { isComposing = true; });
+  ta.addEventListener('compositionend', () => { isComposing = false; });
+  ta.focus();
+}
+
+function cancelEditAnswer(btn, questionId) {
+  const wrap = btn.closest('.bubble-wrap');
+  wrap.querySelector('.edit-area').remove();
+  wrap.querySelector('.btn-edit-answer').style.display = '';
+}
+
+async function saveEditAnswer(btn, questionId) {
+  const wrap = btn.closest('.bubble-wrap');
+  const ta = wrap.querySelector('textarea');
+  const newValue = ta.value.trim();
+  if (!newValue) return;
+
+  // Update data
+  currentProject.data[questionId] = newValue;
+  currentProject.updatedAt = Date.now();
+  await saveProject(currentProject);
+
+  // Update bubble display
+  const bubble = wrap.querySelector('.bubble');
+  bubble.innerHTML = newValue.replace(/\n/g, '<br>');
+
+  // Clean up edit UI
+  wrap.querySelector('.edit-area').remove();
+  wrap.querySelector('.btn-edit-answer').style.display = '';
+
+  // Flash to indicate saved
+  bubble.style.transition = 'box-shadow .3s';
+  bubble.style.boxShadow = '0 0 12px var(--success)';
+  setTimeout(() => { bubble.style.boxShadow = 'none'; }, 1000);
+
+  renderProjectList();
 }
 
 function addTypingIndicator() {
@@ -718,7 +801,7 @@ async function switchProject(id) {
   // Replay messages
   if (currentProject.messages.length) {
     currentProject.messages.forEach(m => {
-      addMessage(m.type, m.content, null, null);
+      addMessage(m.type, m.content, null, null, false, m.questionId || null);
     });
     // Show next question if not finished
     if (currentQuestionIndex < questionQueue.length) {
@@ -788,7 +871,7 @@ async function processAnswer(answer) {
   // Store answer
   currentProject.data[q.id] = answer;
   currentProject.messages.push({type:'bot', content:q.text});
-  currentProject.messages.push({type:'user', content:answer});
+  currentProject.messages.push({type:'user', content:answer, questionId:q.id});
 
   // Handle structure choice
   if (q.id === 'structure_choice') {
@@ -845,7 +928,10 @@ async function sendMessage() {
   isProcessing = true;
   input.value = '';
   input.style.height = 'auto';
-  addMessage('user', text);
+
+  // Get current question ID for edit support
+  const currentQId = (currentQuestionIndex < questionQueue.length) ? questionQueue[currentQuestionIndex].id : null;
+  addMessage('user', text, null, null, false, currentQId);
 
   addTypingIndicator();
   await delay(400 + Math.random() * 400);
@@ -856,7 +942,7 @@ async function sendMessage() {
 }
 
 function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !isComposing && !e.isComposing) {
     e.preventDefault();
     sendMessage();
   }
@@ -1013,6 +1099,11 @@ async function init() {
   initFirebase();
   allProjects = await loadProjects();
   renderProjectList();
+
+  // IME composition event listeners
+  const input = document.getElementById('userInput');
+  input.addEventListener('compositionstart', () => { isComposing = true; });
+  input.addEventListener('compositionend', () => { isComposing = false; });
 
   // Load saved Firebase config into form
   const saved = JSON.parse(localStorage.getItem(FB_CONFIG_KEY) || '{}');
