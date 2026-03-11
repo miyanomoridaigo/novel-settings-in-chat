@@ -167,6 +167,31 @@ body { font-family:'Segoe UI','Hiragino Sans',sans-serif; background:var(--bg); 
 .btn-edit-save:hover { background:#6a4ae0; }
 .btn-edit-cancel { background:var(--surface2); color:var(--text2); border:1px solid var(--border) !important; }
 .btn-edit-cancel:hover { color:var(--text); }
+
+/* Skip / Later button */
+.btn-skip { display:inline-flex; align-items:center; gap:4px; padding:6px 14px; border-radius:16px; border:1px dashed var(--text2); background:transparent; color:var(--text2); cursor:pointer; font-size:12px; margin-top:8px; transition:all .15s; }
+.btn-skip:hover { border-color:var(--warning); color:var(--warning); background:rgba(251,191,36,.06); }
+
+/* Question Nav Panel (opened by phase tab click) */
+.qnav-overlay { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:100; display:none; align-items:center; justify-content:center; }
+.qnav-overlay.show { display:flex; }
+.qnav-panel { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:92%; max-width:640px; max-height:80vh; overflow-y:auto; padding:28px; }
+.qnav-panel h2 { color:var(--accent2); margin-bottom:6px; font-size:18px; }
+.qnav-panel .qnav-desc { color:var(--text2); font-size:13px; margin-bottom:18px; }
+.qnav-phase-group { margin-bottom:20px; }
+.qnav-phase-group h3 { font-size:14px; color:var(--accent2); margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.qnav-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; cursor:pointer; margin-bottom:4px; transition:background .12s; }
+.qnav-item:hover { background:var(--surface2); }
+.qnav-item .qnav-status { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+.qnav-item .qnav-status.answered { background:rgba(52,211,153,.15); color:var(--success); border:1px solid rgba(52,211,153,.4); }
+.qnav-item .qnav-status.unanswered { background:rgba(251,191,36,.1); color:var(--warning); border:1px dashed rgba(251,191,36,.5); }
+.qnav-item .qnav-status.locked { background:var(--surface2); color:var(--text2); border:1px solid var(--border); }
+.qnav-item .qnav-label { flex:1; font-size:13px; }
+.qnav-item .qnav-answer { font-size:12px; color:var(--text2); max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.qnav-close { float:right; background:var(--surface2); border:1px solid var(--border); color:var(--text); width:30px; height:30px; border-radius:50%; cursor:pointer; font-size:14px; }
+
+/* Phase tab badge for unanswered count */
+.phase-tab .badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; border-radius:8px; background:var(--warning); color:var(--bg); font-size:10px; font-weight:700; margin-left:4px; padding:0 4px; }
 </style>
 </head>
 <body>
@@ -213,6 +238,11 @@ body { font-family:'Segoe UI','Hiragino Sans',sans-serif; background:var(--bg); 
 <!-- Summary Overlay -->
 <div class="summary-overlay" id="summaryOverlay" onclick="if(event.target===this)closeSummary()">
   <div class="summary-panel" id="summaryContent"></div>
+</div>
+
+<!-- Question Nav Overlay -->
+<div class="qnav-overlay" id="qnavOverlay" onclick="if(event.target===this)closeQnav()">
+  <div class="qnav-panel" id="qnavContent"></div>
 </div>
 
 <!-- Settings Overlay -->
@@ -567,6 +597,7 @@ let questionQueue = [];
 let currentQuestionIndex = 0;
 let isProcessing = false;
 let isComposing = false; // IME変換中フラグ
+let answeringSpecificQuestion = null; // 過去の質問に回答中の場合、そのquestion ID
 
 // ============================================================
 // UI FUNCTIONS
@@ -606,13 +637,19 @@ function renderProjectList() {
 function renderPhaseTabs() {
   const tabs = document.getElementById('phaseTabs');
   if (!currentProject) { tabs.innerHTML=''; return; }
-  const completedPhases = currentProject.completedPhases || [];
   const currentPhase = getCurrentPhase();
   tabs.innerHTML = PHASES.map(p => {
     let cls = 'phase-tab';
-    if (completedPhases.includes(p.id)) cls += ' completed';
+    // Count answered/total for this phase
+    const phaseQs = questionQueue.filter(q => q.phase === p.id);
+    const answeredCount = phaseQs.filter(q => currentProject.data[q.id]).length;
+    const totalCount = phaseQs.length;
+    const allAnswered = totalCount > 0 && answeredCount === totalCount;
+    if (allAnswered) cls += ' completed';
     if (p.id === currentPhase) cls += ' active';
-    return `<div class="${cls}" onclick="jumpToPhase('${p.id}')">${p.icon} ${p.label}</div>`;
+    const unanswered = totalCount - answeredCount;
+    const badge = (totalCount > 0 && unanswered > 0 && answeredCount > 0) ? `<span class="badge">${unanswered}</span>` : '';
+    return `<div class="${cls}" onclick="openQnav('${p.id}')">${p.icon} ${p.label}${badge}</div>`;
   }).join('');
 }
 
@@ -621,7 +658,7 @@ function getCurrentPhase() {
   return questionQueue[currentQuestionIndex]?.phase || 'concept';
 }
 
-function addMessage(type, content, quickReplies, hint, multiSelect, questionId) {
+function addMessage(type, content, quickReplies, hint, multiSelect, questionId, showSkip) {
   const container = document.getElementById('chatContainer');
   const msg = document.createElement('div');
   msg.className = `message ${type}`;
@@ -643,6 +680,10 @@ function addMessage(type, content, quickReplies, hint, multiSelect, questionId) 
       } else {
         html += `<div class="quick-replies">${quickReplies.map(r => `<button class="quick-reply" onclick="selectQuickReply(this, '${r.replace(/'/g,"\\'")}')">${r}</button>`).join('')}</div>`;
       }
+    }
+    // Add skip button for active questions (not for replay)
+    if (showSkip) {
+      html += `<button class="btn-skip" onclick="skipQuestion(this)">後で答える →</button>`;
     }
     html += '</div>';
     msg.innerHTML = html;
@@ -729,6 +770,9 @@ function selectQuickReply(btn, value) {
   document.getElementById('userInput').value = value;
   const parent = btn.closest('.quick-replies');
   if (parent) parent.querySelectorAll('.quick-reply').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+  // Disable skip button in same bubble
+  const bubble = btn.closest('.bubble');
+  if (bubble) { const skip = bubble.querySelector('.btn-skip'); if (skip) skip.style.display = 'none'; }
   sendMessage();
 }
 
@@ -752,6 +796,9 @@ function confirmMultiSelect(btn) {
   bubble.querySelectorAll('.quick-reply.selected').forEach(b => { b.style.opacity = '1'; });
   btn.disabled = true;
   btn.style.opacity = '0.5';
+  // Disable skip button
+  const skip = bubble.querySelector('.btn-skip');
+  if (skip) skip.style.display = 'none';
   document.getElementById('userInput').value = values.join('、');
   sendMessage();
 }
@@ -841,16 +888,21 @@ function enableInput(enabled) {
 // ============================================================
 function askNextQuestion() {
   if (currentQuestionIndex >= questionQueue.length) {
-    addMessage('bot', '🎉 <strong>すべての質問に答え終わりました！</strong>\n\n素晴らしい物語の企画書が出来上がりました。右上の「📋 企画書」ボタンで確認してください。\n\n修正したい箇所があれば、フェーズタブをクリックして遡ることもできます。');
+    // Check for unanswered questions
+    const unanswered = questionQueue.filter(q => !currentProject.data[q.id]);
+    if (unanswered.length > 0) {
+      addMessage('bot', `🎉 <strong>全フェーズを通過しました！</strong>\n\nまだ <em>${unanswered.length}件</em> の未回答があります。\n上のフェーズタブをクリックして、未回答の質問にいつでも答えられます。\n\n右上の「📋 企画書」ボタンで現在の企画書を確認できます。`);
+    } else {
+      addMessage('bot', '🎉 <strong>すべての質問に答え終わりました！</strong>\n\n素晴らしい物語の企画書が出来上がりました。右上の「📋 企画書」ボタンで確認してください。\n\nフェーズタブから回答の修正もいつでも可能です。');
+    }
     if (currentProject) {
-      currentProject.completedPhases = PHASES.map(p=>p.id);
       saveProject(currentProject);
       renderPhaseTabs();
     }
     return;
   }
   const q = questionQueue[currentQuestionIndex];
-  addMessage('bot', q.text, q.quickReplies, q.hint, q.multiSelect);
+  addMessage('bot', q.text, q.quickReplies, q.hint, q.multiSelect, null, true);
   renderPhaseTabs();
 }
 
@@ -896,9 +948,6 @@ async function processAnswer(answer) {
   const completedPhase = q.phase;
   const nextIndex = currentQuestionIndex + 1;
   if (nextIndex < questionQueue.length && questionQueue[nextIndex].phase !== completedPhase) {
-    if (!currentProject.completedPhases.includes(completedPhase)) {
-      currentProject.completedPhases.push(completedPhase);
-    }
     // Phase transition message
     addTypingIndicator();
     await delay(600);
@@ -929,7 +978,43 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
 
-  // Get current question ID for edit support
+  // Answering a specific past question?
+  if (answeringSpecificQuestion) {
+    const qid = answeringSpecificQuestion;
+    addMessage('user', text, null, null, false, qid);
+
+    addTypingIndicator();
+    await delay(300);
+    removeTypingIndicator();
+
+    // Save the answer
+    currentProject.data[qid] = text;
+    currentProject.messages.push({type:'user', content:text, questionId:qid});
+    currentProject.updatedAt = Date.now();
+    await saveProject(currentProject);
+
+    addMessage('bot', `✅ 回答を保存しました！`);
+    answeringSpecificQuestion = null;
+    renderPhaseTabs();
+    renderProjectList();
+
+    // If we're still in the middle of the flow, show next question
+    if (currentQuestionIndex < questionQueue.length) {
+      await delay(400);
+      askNextQuestion();
+    }
+
+    isProcessing = false;
+    return;
+  }
+
+  // Normal flow - disable skip/quick-reply buttons on previous bot message
+  const allBotMsgs = document.querySelectorAll('.message.bot');
+  if (allBotMsgs.length) {
+    const lastBot = allBotMsgs[allBotMsgs.length - 1];
+    lastBot.querySelectorAll('.btn-skip, .btn-confirm-multi').forEach(b => b.style.display = 'none');
+    lastBot.querySelectorAll('.quick-reply').forEach(b => { b.disabled = true; b.style.opacity = '0.4'; });
+  }
   const currentQId = (currentQuestionIndex < questionQueue.length) ? questionQueue[currentQuestionIndex].id : null;
   addMessage('user', text, null, null, false, currentQId);
 
@@ -953,22 +1038,140 @@ function handleKey(e) {
   }, 0);
 }
 
-function jumpToPhase(phaseId) {
-  if (!currentProject) return;
-  const idx = questionQueue.findIndex(q => q.phase === phaseId);
-  if (idx >= 0 && idx < currentQuestionIndex) {
-    // Allow revisiting - just show in chat
-    const phaseQuestions = questionQueue.filter(q => q.phase === phaseId);
-    addMessage('bot', `📌 <strong>${PHASES.find(p=>p.id===phaseId)?.label}</strong>の回答を確認：`);
-    phaseQuestions.forEach(q => {
-      const answer = currentProject.data[q.id];
-      if (answer) {
-        addMessage('bot', `<strong>${q.text.replace(/<[^>]+>/g,'').substring(0,40)}...</strong>`);
-        addMessage('user', answer);
-      }
-    });
-    addMessage('bot', '修正したい場合は、チャットで「○○を修正：新しい内容」と入力してください。');
+// ---- Skip Question ----
+async function skipQuestion(btn) {
+  if (!currentProject || isProcessing) return;
+  isProcessing = true;
+
+  // Disable skip button
+  btn.disabled = true;
+  btn.style.opacity = '0.4';
+  btn.textContent = 'スキップしました';
+
+  // Disable quick replies in same bubble
+  const bubble = btn.closest('.bubble');
+  if (bubble) {
+    bubble.querySelectorAll('.quick-reply').forEach(b => { b.disabled = true; b.style.opacity = '0.4'; });
+    const confirmBtn = bubble.querySelector('.btn-confirm-multi');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.style.opacity = '0.4'; }
   }
+
+  // If answering a specific past question, just cancel back to normal
+  if (answeringSpecificQuestion) {
+    addMessage('bot', `⏭ この質問はスキップしました。後でいつでも答えられます。`);
+    answeringSpecificQuestion = null;
+    // Show current question again
+    await delay(400);
+    askNextQuestion();
+    isProcessing = false;
+    return;
+  }
+
+  const q = questionQueue[currentQuestionIndex];
+  // Record skip in messages (but NOT in data)
+  currentProject.messages.push({type:'bot', content:q.text});
+  currentProject.messages.push({type:'user', content:'（後で答える）', questionId:q.id, skipped:true});
+
+  addMessage('user', '<span style="color:var(--text2)">後で答える</span>');
+
+  // Move to next question
+  const completedPhase = q.phase;
+  const nextIndex = currentQuestionIndex + 1;
+  if (nextIndex < questionQueue.length && questionQueue[nextIndex].phase !== completedPhase) {
+    // Phase transition
+    addTypingIndicator();
+    await delay(400);
+    removeTypingIndicator();
+    const nextPhase = PHASES.find(p => p.id === questionQueue[nextIndex].phase);
+    if (nextPhase) {
+      addMessage('bot', `${nextPhase.icon} <strong>${nextPhase.label}</strong>フェーズに進みます！`);
+      await delay(300);
+    }
+  }
+
+  currentQuestionIndex = nextIndex;
+  currentProject.currentQuestionIndex = currentQuestionIndex;
+  currentProject.updatedAt = Date.now();
+  await saveProject(currentProject);
+  renderProjectList();
+  renderPhaseTabs();
+  askNextQuestion();
+  isProcessing = false;
+}
+
+// ---- Question Navigator Panel ----
+function openQnav(phaseId) {
+  if (!currentProject) return;
+  const panel = document.getElementById('qnavContent');
+  const phase = PHASES.find(p => p.id === phaseId);
+
+  let html = `<button class="qnav-close" onclick="closeQnav()">✕</button>`;
+  html += `<h2>${phase ? phase.icon : ''} ${phase ? phase.label : 'すべて'} の質問一覧</h2>`;
+  html += `<p class="qnav-desc">クリックで質問に回答・再回答できます</p>`;
+
+  const phases = phaseId ? [phaseId] : PHASES.map(p=>p.id);
+
+  phases.forEach(pid => {
+    const ph = PHASES.find(p=>p.id===pid);
+    const phaseQs = questionQueue.filter(q => q.phase === pid);
+    if (phaseQs.length === 0) return;
+
+    if (phases.length > 1) {
+      html += `<div class="qnav-phase-group"><h3>${ph.icon} ${ph.label}</h3>`;
+    }
+    phaseQs.forEach(q => {
+      const answer = currentProject.data[q.id];
+      const answered = !!answer;
+      const qIndex = questionQueue.indexOf(q);
+      // "locked" only if structure hasn't been chosen and this is a plot beat
+      const locked = (q.phase === 'plot' || q.phase === 'refine') && !currentProject.structureType && q.id !== 'structure_choice';
+
+      const statusCls = locked ? 'locked' : (answered ? 'answered' : 'unanswered');
+      const statusIcon = locked ? '🔒' : (answered ? '✓' : '?');
+      const label = q.text.replace(/<[^>]+>/g,'').replace(/\n/g,' ').substring(0, 60);
+      const answerPreview = answered ? answer.substring(0, 40) + (answer.length > 40 ? '…' : '') : (locked ? '構成選択後に回答可能' : '未回答');
+
+      html += `<div class="qnav-item" onclick="${locked ? '' : `goToQuestion('${q.id}')`}" style="${locked ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+        <div class="qnav-status ${statusCls}">${statusIcon}</div>
+        <div class="qnav-label">${label}</div>
+        <div class="qnav-answer">${answerPreview}</div>
+      </div>`;
+    });
+    if (phases.length > 1) html += `</div>`;
+  });
+
+  panel.innerHTML = html;
+  document.getElementById('qnavOverlay').classList.add('show');
+}
+
+function closeQnav() {
+  document.getElementById('qnavOverlay').classList.remove('show');
+}
+
+// Jump to a specific question to answer it
+async function goToQuestion(questionId) {
+  closeQnav();
+  if (!currentProject) return;
+
+  const q = questionQueue.find(qq => qq.id === questionId);
+  if (!q) return;
+
+  const existingAnswer = currentProject.data[questionId];
+  answeringSpecificQuestion = questionId;
+
+  // Show in chat
+  const container = document.getElementById('chatContainer');
+  addMessage('bot', `📌 <strong>質問に回答${existingAnswer ? '（再編集）' : ''}</strong>`);
+
+  if (existingAnswer) {
+    addMessage('bot', `現在の回答: <em>${existingAnswer}</em>\n\n新しい回答を入力すると上書きされます。`);
+  }
+
+  addMessage('bot', q.text, q.quickReplies, q.hint, q.multiSelect, null, true);
+  container.scrollTop = container.scrollHeight;
+
+  enableInput(true);
+  document.getElementById('userInput').focus();
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
